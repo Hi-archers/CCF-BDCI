@@ -9,6 +9,9 @@
 
 ## 数据
 将原始数据里面的"text"取出作为输入数据，将"spo_list"中的"name"分别取出作为输出数据。
+sum_text = 1491
+sum_sentence = 5586
+
 ```
 raw_data:
 	"ID": "AT0001",
