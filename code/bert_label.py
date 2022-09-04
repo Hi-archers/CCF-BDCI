@@ -2,18 +2,21 @@ import torch
 import csv
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '7'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 from tqdm import tqdm
+
+from sklearn.metrics import precision_score, recall_score, accuracy_score
 
 import torch.nn.functional as F
 import torch.nn as softmax
 from transformers import BertTokenizer, BertModel
 from torch.utils.data import Dataset, DataLoader
+from transformers import get_linear_schedule_with_warmup
 
 from transformers import AutoConfig, AutoTokenizer, AutoModelForSequenceClassification
 
-from utlis import L_dataset,E_dataset
+from utlis import L_dataset
 
 def safe_concat(A, B):
     if A == None:
@@ -21,11 +24,14 @@ def safe_concat(A, B):
     else :
         return torch.cat((A,B))
 
+from transformers import BertTokenizer
+from roformer import RoFormerForSequenceClassification,RoFormerConfig
+
 def Get_model_token():
-    model_path = "../../model/bert-base-uncased/"
+    model_path = "../../model/roformer_v2_chinese_char_large"
 
     model_config = AutoConfig.from_pretrained(pretrained_model_name_or_path = model_path,
-                                              num_labels = 6)
+                                              num_labels = 2)
 
     # Get model's tokenizer.
     tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path = model_path)
@@ -37,29 +43,79 @@ def Get_model_token():
 
     return model, tokenizer
 
+def Get_roformer():
+    model_path = "../../model/roformer_v2_chinese_char_large"
+
+    config = RoFormerConfig.from_pretrained(
+        model_path,
+        num_labels=2,
+    )
+
+    # Get model's tokenizer.
+    tokenizer = BertTokenizer.from_pretrained(pretrained_model_name_or_path = model_path)
+
+    # Get the actual model.
+    print('Loading model...')
+    model = RoFormerForSequenceClassification.from_pretrained(
+        pretrained_model_name_or_path=model_path,
+        config=config,
+    ).cuda()
+
+    return model, tokenizer
+
+
 def train(model, tokenize):
-    train_path = "../data/bert_train.csv"
-    val_path = "../data/bert_val.csv"
+    train_path = "../dataset/bert_train.csv"
+    val_path = "../dataset/bert_val.csv"
+
+    batch_size = 8
+    lr = 3e-5
 
     Train_data = L_dataset(data_path = train_path, tokenizer = tokenize, test = False)
-    Train_dataloader = DataLoader(dataset = Train_data, batch_size=256, shuffle = True, drop_last=True, collate_fn=Train_data.collate_fn)
+    Train_dataloader = DataLoader(dataset = Train_data, batch_size=batch_size, shuffle = True, drop_last=True, collate_fn=Train_data.collate_fn)
     val_data = L_dataset(data_path = val_path, tokenizer = tokenize, test = True)
-    val_dataloader = DataLoader(dataset = val_data, batch_size=256, shuffle=False, drop_last=False, collate_fn=val_data.collate_fn)
+    val_dataloader = DataLoader(dataset = val_data, batch_size=batch_size, shuffle=False, drop_last=False, collate_fn=val_data.collate_fn)
 
-    optimizer = torch.optim.Adam(params = model.parameters(), lr = 3e-5)
+    optimizer = torch.optim.AdamW(params = model.parameters(), lr = lr)
 
-    num_epoch = 5
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer=optimizer,
+        # 3% of Total Steps
+        num_warmup_steps=int(0.1 * 40 * len(Train_data) / 24),
+        num_training_steps=int(40 * len(Train_data) / 24),
+    )
+
+    logger = get_log(__name__, "logs/bert_log.txt")
+
+    logger.info("Start Training！")
+    logger.info(f"Model = roformer_v2_chinese_char_large number label = {2} ")
+    logger.info(f"Optimizer Setting : learning rate = {lr} batch size = {batch_size}")
+
+
+    num_epoch = 40
     for epoch in range(num_epoch):
         model.train()
         losses = []
         ans = None
+        pre = None
         for i,batch in tqdm(enumerate(Train_dataloader), total = len(Train_dataloader)):
             tensor_data = batch['tensor_data']
             source_tokens = tensor_data['source_tokens'].cuda()
             source_masks = tensor_data['source_masks'].cuda()
             target_label = tensor_data['target'].cuda()
 
-            output = model(input_ids = source_tokens, attention_mask = source_masks)['logits']
+            output = model(input_ids = source_tokens, attention_mask = source_masks).logits
+            # output = model(input_ids = source_tokens, attention_mask = source_masks).logits[0]
+
+            # print(output)
+
+            # print(f"source_token shape = {source_tokens.shape}")
+            # print(f"output shape = {output.shape}")
+            # exit()
+
+            # print(f"output shape = {output.shape}")
+            # print(f"target label shape = {target_label.shape}")
+            # print(target_label)
 
             optimizer.zero_grad()
             loss = F.cross_entropy(output, target_label)
@@ -68,30 +124,53 @@ def train(model, tokenize):
                 losses.append(loss.item())
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
-        print(f"epoch = {epoch} Train losses = {sum(losses) / len(losses)}")
+            output = torch.argmax(output, dim = 1)
+
+            pre = safe_concat(pre, output)
+            ans = safe_concat(ans, target_label)
+
+        pre = ~pre.cpu().numpy()
+        ans = ~ans.cpu().numpy()
+        pre = ~pre
+        ans = ~ans
+
+
+        logger.info(f"epoch = {epoch} Train losses = {sum(losses) / len(losses)} Train acc = {accuracy_score(ans, pre)} precision = {precision_score(ans, pre)} recall = {recall_score(ans, pre)}")
+
+        ans = None
+        pre = None
+
         losses = []
         model.eval()
-        for i,batch in enumerate(val_dataloader):
+        for i,batch in tqdm(enumerate(val_dataloader), total=len(val_dataloader)):
             tensor_data = batch['tensor_data']
             source_tokens = tensor_data['source_tokens'].cuda()
             source_masks = tensor_data['source_masks'].cuda()
             target_label = tensor_data['target'].cuda()
 
-            output = model(input_ids = source_tokens, attention_mask = source_masks)['logits']
-
-            loss = F.cross_entropy(output, target_label)
             with torch.no_grad():
+                output = model(input_ids = source_tokens, attention_mask = source_masks)['logits']
+
+                loss = F.cross_entropy(output, target_label)
                 losses.append(loss.item())
 
-            output = torch.argmax(output, dim = 1)
+                output = torch.argmax(output, dim = 1)
 
-            tmp = output == target_label
-            ans = safe_concat(ans, tmp)
+                pre = safe_concat(pre, output)
+                ans = safe_concat(ans, target_label)
 
-        model.save_pretrained(os.path.join("../data/bert-base", 'best_ckpt'))
 
-        print(f"epoch = {epoch} eval losses = {sum(losses) / len(losses)} eval acc = {torch.sum(ans) / ans.shape[0]}")
+        pre = ~pre.cpu().numpy()
+        ans = ~ans.cpu().numpy()
+
+        pre = ~pre
+        ans = ~ans
+
+        # model.save_pretrained(os.path.join("./data/bert-base", 'best_ckpt'))
+
+        logger.info(f"epoch = {epoch} eval losses = {sum(losses) / len(losses)} Eval acc = {accuracy_score(ans, pre)} precision = {precision_score(ans, pre)} recall = {recall_score(ans, pre)}")
 
 def Pre(model, tokenize):
     train_path = "../data/train.txt"
@@ -141,8 +220,33 @@ def Pre(model, tokenize):
             f.write(str(i.item()))
             f.write('\n')
 
+import logging
+from logging.handlers import TimedRotatingFileHandler
+
+root_logger = logging.getLogger()
+root_logger.handlers = []
+
+def get_log(name, log_file=None, console=True, when="D", interval=7):
+    logger = logging.getLogger(name)
+    logger.propagate = False
+    logger.setLevel(level=logging.INFO)
+
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    if log_file:
+        handler = TimedRotatingFileHandler(log_file, when=when, interval=interval, backupCount=1, encoding="utf-8")
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
+    if console:
+        console = logging.StreamHandler()
+        console.setLevel(logging.INFO)
+        console.setFormatter(formatter)
+        logger.addHandler(console)
+
+    return logger
 
 if __name__ == "__main__":
-    model, tokenize = Get_model_token()
+    model, tokenize = Get_roformer()
     train(model, tokenize)
-    Pre(model, tokenize)
+    # Pre(model, tokenize)
