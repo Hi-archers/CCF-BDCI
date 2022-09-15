@@ -43,13 +43,13 @@ ToDo:
 
 ## 函数
 infer.py:
-'''
+```
 infer(args, logger)
 
 args 参数组
 
 logger log记录
-'''
+```
 ## 参考
 
 [^1]: [BART: Denoising Sequence-to-Sequence Pre-training for Natural Language Generation, Translation, and Comprehension](https://arxiv.org/abs/1910.13461)
