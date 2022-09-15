@@ -44,11 +44,13 @@ ToDo:
 ## 函数
 infer.py:
 ```
-infer(args, logger)
-
+infer(args, logger):
+Parameters：
 args 参数组
-
 logger log记录
+Returns：
+preds 推理结果
+
 ```
 ## 参考
 
