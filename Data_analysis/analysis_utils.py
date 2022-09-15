@@ -8,7 +8,7 @@ plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
 
 
 def load_data(data_file='train.json'):
-    file_path = os.path.join('../data', data_file)
+    file_path = os.path.join('../data_1', data_file)
     json_data = []
     for line in open(file_path, 'r', encoding='utf-8'):
         json_data.append(json.loads(line))
