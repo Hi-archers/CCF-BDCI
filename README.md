@@ -44,13 +44,27 @@ ToDo:
 ## 函数
 infer.py:
 ```
-**infer(args, logger):**
-*Parameters：*
-args 参数组
-logger log记录
-*Returns：*
-preds 推理结果
+infer(args, logger): (推理函数)
+Parameters： args 参数组 logger log记录
+Returns： preds 推理结果
 
+Get_Entity_Pos(text,entity): (从text中匹配entity位置，不成功返回[-1,0])
+Parameters： text 待匹配文本 entity 待匹配实体
+Returns： [start,end]
+
+Get_Entity(pred): (对生成结果中的实体进行匹配)
+Parameters：pred 为生成模型的生成结果，为list对象
+Returns：head_entity,relation,tail_entity 头实体，关系，尾实体
+
+to_submission(predictions): (将模型推理结果转为可提交格式)
+Parameters：predictions infer()函数推理结果
+Actions：存储submission.json文件
+```
+utlis.py
+```
+get_F1_score(train_answers_path,train_predict_path): (获取F1分值)
+Parameters: train_answers_path 真实标签json路径 train_predict_path 预测结果json路径
+Actions: 打印F1分值
 ```
 ## 参考
 
